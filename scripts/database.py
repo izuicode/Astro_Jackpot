@@ -2,11 +2,21 @@ import webbrowser
 from datetime import datetime, timezone
 from supabase import Client, create_client
 
-SUPABASE_URL = "https://upqlntuxqqeqohkxwyix.supabase.co"
+SUPABASE_URL = "https://upqlintuxqqeqohkxwyix.supabase.co"
 SUPABASE_KEY = "sb_publishable_6ot9xOXfYKPqrm3PvnEZ5A_RQOlO3kk"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 current_user = None  # Guardará la sesión del usuario actual
+is_guest = False    # Bandera para identificar si estamos en modo invitado
+
+# --- Perfil Local de Invitado ---
+guest_profile = {
+    "username": "Piloto_Invitado",
+    "coins": 100,
+    "level": 1,
+    "last_daily_reward": None,
+    "last_ship_game": None,
+}
 
 
 def _crear_perfil_inicial(user_id, username, email):
@@ -27,6 +37,7 @@ def _crear_perfil_inicial(user_id, username, email):
 
 def registrar_usuario(email, password, username):
     """Registra un nuevo usuario, crea su perfil en la BD y guarda la sesión."""
+    global current_user, is_guest
     try:
         response = supabase.auth.sign_up(
             {
@@ -35,8 +46,8 @@ def registrar_usuario(email, password, username):
                 "options": {"data": {"username": username}},
             }
         )
-        global current_user
         current_user = response.user
+        is_guest = False
 
         if current_user:
             _crear_perfil_inicial(current_user.id, username, email)
@@ -48,15 +59,27 @@ def registrar_usuario(email, password, username):
 
 def iniciar_sesion(email, password):
     """Inicia sesión con email y contraseña."""
+    global current_user, is_guest
     try:
         response = supabase.auth.sign_in_with_password(
             {"email": email, "password": password}
         )
-        global current_user
         current_user = response.user
+        is_guest = False
         return True, "Inicio de sesión correcto."
     except Exception as e:
         return False, str(e)
+
+
+def iniciar_sesion_invitado(username="Piloto_Invitado"):
+    """Inicia sesión localmente en modo invitado sin consultar a Supabase."""
+    global current_user, is_guest, guest_profile
+    is_guest = True
+    current_user = type(
+        "GuestUser", (), {"id": "guest_123", "email": "invitado@astro.local"}
+    )
+    guest_profile["username"] = username if username else "Piloto_Invitado"
+    return True, f"Bienvenido, {guest_profile['username']}!"
 
 
 def iniciar_sesion_google():
@@ -77,9 +100,14 @@ def iniciar_sesion_google():
 
 
 def obtener_perfil():
-    """Obtiene el perfil del usuario actual sin romper el juego si falla la red."""
+    """Obtiene el perfil del usuario actual (Supabase o Invitado local)."""
+    global is_guest, guest_profile
+    if is_guest:
+        return guest_profile
+
     if not current_user:
         return None
+
     try:
         res = (
             supabase.table("profiles")
@@ -96,6 +124,7 @@ def obtener_perfil():
 
 def reclamar_recompensa_diaria():
     """Verifica si pasaron 24 horas y entrega 10 monedas."""
+    global is_guest, guest_profile
     perfil = obtener_perfil()
     if not perfil:
         return False, "Usuario no autenticado o error de red."
@@ -112,6 +141,12 @@ def reclamar_recompensa_diaria():
 
     if horas_transcurridas >= 24:
         nuevas_monedas = perfil.get("coins", 0) + 10
+
+        if is_guest:
+            guest_profile["coins"] = nuevas_monedas
+            guest_profile["last_daily_reward"] = now.isoformat()
+            return True, "¡Has reclamado +10 monedas diarias!"
+
         try:
             supabase.table("profiles").update(
                 {
@@ -129,6 +164,7 @@ def reclamar_recompensa_diaria():
 
 def guardar_monedas_nave(monedas_ganadas):
     """Verifica los 30 min de cooldown y guarda las monedas recolectadas."""
+    global is_guest, guest_profile
     perfil = obtener_perfil()
     if not perfil:
         return False, "Error de sesión o red."
@@ -151,6 +187,12 @@ def guardar_monedas_nave(monedas_ganadas):
         )
 
     nuevas_monedas = perfil.get("coins", 0) + monedas_ganadas
+
+    if is_guest:
+        guest_profile["coins"] = nuevas_monedas
+        guest_profile["last_ship_game"] = now.isoformat()
+        return True, f"¡Sumaste +{monedas_ganadas} monedas a tu perfil!"
+
     try:
         supabase.table("profiles").update(
             {"coins": nuevas_monedas, "last_ship_game": now.isoformat()}
