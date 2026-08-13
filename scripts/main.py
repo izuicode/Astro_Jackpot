@@ -1,27 +1,31 @@
-import pygame
+import os
 import random
 import sys
-import os
-from datetime import datetime, timezone
-import database  # Tu archivo database.py en la misma carpeta
+import pygame
+import pygame_gui
+import database
 
 # --- Inicialización de Pygame ---
 pygame.init()
-WIDTH, HEIGHT = 900, 650
+
+WIDTH, HEIGHT = 450, 800
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Astro Jackpot")
 clock = pygame.time.Clock()
 FPS = 60
 
-# --- Cargar Fuentes ---
-font_small = pygame.font.SysFont("Arial", 18)
-font_medium = pygame.font.SysFont("Arial", 24, bold=True)
-font_large = pygame.font.SysFont("Arial", 36, bold=True)
+# --- Pygame GUI Manager ---
+manager = pygame_gui.UIManager((WIDTH, HEIGHT))
 
-# --- Definición de Rutas de Imágenes ---
+# --- Fuentes ---
+font_small = pygame.font.SysFont("Arial", 16)
+font_medium = pygame.font.SysFont("Arial", 20, bold=True)
+font_large = pygame.font.SysFont("Arial", 28, bold=True)
+
+# --- Rutas e Imágenes ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMG_DIR = os.path.join(BASE_DIR, "..", "img")
-BG_DIR = os.path.join(BASE_DIR, "..", "img_background")
+
 
 def load_img(folder, filename, size=None):
     path = os.path.join(folder, filename)
@@ -36,255 +40,400 @@ def load_img(folder, filename, size=None):
         surf.fill((255, 0, 255))
         return surf
 
-# --- Cargar Assets ---
-img_asteroide = load_img(IMG_DIR, "asteriod_dark.png", (120, 150))
-img_button = load_img(IMG_DIR, "button.png", (160, 50))
-img_campana = load_img(IMG_DIR, "campana.png", (120, 150))
-img_coin = load_img(IMG_DIR, "coin.png", (40, 40))
-img_nave = load_img(IMG_DIR, "nave.png", (120, 150))
-img_seven = load_img(IMG_DIR, "seven.png", (120, 150))
-img_x3 = load_img(IMG_DIR, "x3.png", (120, 150))
-img_x5 = load_img(IMG_DIR, "x5.png", (120, 150))
 
-# Nave recortada para el minijuego
-img_nave_game = load_img(IMG_DIR, "nave.png", (60, 60))
-img_asteroide_game = load_img(IMG_DIR, "asteriod_dark.png", (50, 50))
+# Carga de Assets PNG
+img_asteroide = load_img(IMG_DIR, "asteriod_dark.png", (90, 110))
+img_button_spin = load_img(IMG_DIR, "button.png", (180, 65))
+img_campana = load_img(IMG_DIR, "campana.png", (90, 110))
+img_coin = load_img(IMG_DIR, "coin.png", (35, 35))
+img_nave = load_img(IMG_DIR, "nave.png", (90, 110))
+img_seven = load_img(IMG_DIR, "seven.png", (90, 110))
+img_x3 = load_img(IMG_DIR, "x3.png", (90, 110))
+img_x5 = load_img(IMG_DIR, "x5.png", (90, 110))
 
-# Mapeo de Símbolos y Pagos Base
+# Minijuego
+img_nave_game = load_img(IMG_DIR, "nave.png", (50, 50))
+img_asteroide_game = load_img(IMG_DIR, "asteriod_dark.png", (45, 45))
+
 SLOT_ITEMS = [
     {"name": "nave", "img": img_nave, "mult": 50, "weight": 2},
     {"name": "seven", "img": img_seven, "mult": 20, "weight": 5},
     {"name": "x5", "img": img_x5, "mult": 10, "weight": 10},
     {"name": "x3", "img": img_x3, "mult": 5, "weight": 15},
     {"name": "campana", "img": img_campana, "mult": 3, "weight": 20},
-    {"name": "asteroide", "img": img_asteroide, "mult": 0, "weight": 48}
+    {"name": "asteroide", "img": img_asteroide, "mult": 0, "weight": 48},
 ]
 
-# --- Variables de Estado del Juego ---
-game_state = "LOGIN" # LOGIN, RULETA, NAVE
-bet_multiplier = 1   # Multiplicador de Apuesta: 1, 3 o 5
+# --- Estados del Juego ---
+game_state = "AUTH"  # AUTH, RULETA, NAVE
+auth_mode = "LOGIN"  # LOGIN o REGISTER
+bet_multiplier = 1
 slot_reels = [SLOT_ITEMS[0], SLOT_ITEMS[1], SLOT_ITEMS[2]]
 is_spinning = False
 spin_timer = 0
+show_top_modal = False
 
-# Sesión local (Sincronizada con Supabase)
-user_data = {"coins": 50, "username": "Invitado", "last_ship": None}
+user_data = {"coins": 0, "username": "Invitado"}
 top_world = []
 
 # Variables Minijuego Nave
-ship_x = WIDTH // 2
-ship_y = HEIGHT - 80
-ship_speed = 8
+ship_x = WIDTH // 2 - 25
+ship_y = HEIGHT - 90
 ship_coins_collected = 0
 ship_start_time = 0
 falling_asteroids = []
 falling_coins_game = []
 
-# --- Funciones de Login y Sync ---
+
+# --- Creación de Elementos GUI (Formulario Auth Corregido) ---
+def build_auth_gui():
+    manager.clear_and_reset()
+
+    # Título
+    pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((25, 40), (400, 50)),
+        text="ASTRO JACKPOT",
+        manager=manager,
+    )
+
+    # Botón Toggle Modo
+    btn_toggle = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((75, 100), (300, 40)),
+        text=(
+            "¿Sin cuenta? Regístrate aquí"
+            if auth_mode == "LOGIN"
+            else "¿Ya tienes cuenta? Inicia sesión"
+        ),
+        manager=manager,
+    )
+
+    # Entradas de Texto (Placeholder nativo)
+    input_email = pygame_gui.elements.UITextEntryLine(
+        relative_rect=pygame.Rect((50, 170), (350, 45)),
+        manager=manager,
+        placeholder_text="Correo electrónico",
+    )
+
+    input_password = pygame_gui.elements.UITextEntryLine(
+        relative_rect=pygame.Rect((50, 230), (350, 45)),
+        manager=manager,
+        placeholder_text="Contraseña",
+    )
+    input_password.set_text_hidden(True)
+
+    input_username = None
+    if auth_mode == "REGISTER":
+        input_username = pygame_gui.elements.UITextEntryLine(
+            relative_rect=pygame.Rect((50, 290), (350, 45)),
+            manager=manager,
+            placeholder_text="Nombre de usuario",
+        )
+
+    # Botón Principal
+    btn_y = 350 if auth_mode == "REGISTER" else 290
+    btn_submit = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((50, btn_y), (350, 50)),
+        text="INGRESAR" if auth_mode == "LOGIN" else "CREAR CUENTA",
+        manager=manager,
+    )
+
+    # Botón Google
+    btn_google = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((50, btn_y + 60), (350, 45)),
+        text="🌐 Continuar con Google",
+        manager=manager,
+    )
+
+    lbl_status = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((25, btn_y + 115), (400, 30)),
+        text="",
+        manager=manager,
+    )
+
+    return {
+        "toggle": btn_toggle,
+        "email": input_email,
+        "pass": input_password,
+        "user": input_username,
+        "submit": btn_submit,
+        "google": btn_google,
+        "status": lbl_status,
+    }
+
+
+auth_widgets = build_auth_gui()
+
+
+# --- Funciones de Lógica ---
 def sync_user():
     global user_data, top_world
     profile = database.obtener_perfil()
     if profile:
-        user_data["coins"] = profile["coins"]
-        user_data["username"] = profile["username"]
-        user_data["last_ship"] = profile["last_ship_game"]
+        user_data["coins"] = profile.get("coins", 0)
+        user_data["username"] = profile.get("username", "Piloto")
     top_world = database.obtener_top_mundial()
 
-# --- Lógica de la Tragamonedas ---
+
 def spin_slots():
     global is_spinning, spin_timer, user_data
-    cost = bet_multiplier
-    if user_data["coins"] >= cost:
-        user_data["coins"] -= cost
+    if user_data["coins"] >= bet_multiplier:
+        user_data["coins"] -= bet_multiplier
         is_spinning = True
         spin_timer = pygame.time.get_ticks()
 
+
 def check_spin_result():
     global is_spinning, user_data
-    # Selección ponderada por pesos
     weights = [item["weight"] for item in SLOT_ITEMS]
     for i in range(3):
         slot_reels[i] = random.choices(SLOT_ITEMS, weights=weights, k=1)[0]
-    
-    # Evaluar premio si los 3 son iguales
+
     if slot_reels[0] == slot_reels[1] == slot_reels[2]:
         win = slot_reels[0]["mult"] * bet_multiplier
         user_data["coins"] += win
-    
-    # Guardar en base de datos al finalizar giro
+
     if database.current_user:
-        database.supabase.table("profiles").update({"coins": user_data["coins"]}).eq("id", database.current_user.id).execute()
+        try:
+            database.supabase.table("profiles").update(
+                {"coins": user_data["coins"]}
+            ).eq("id", database.current_user.id).execute()
+        except Exception as e:
+            print(f"Error sincronizando saldo: {e}")
         sync_user()
-        
     is_spinning = False
 
-# --- Renderizado de Pantallas ---
-def draw_login():
-    screen.fill((20, 20, 35))
-    txt = font_large.render("ASTRO JACKPOT", True, (255, 215, 0))
-    screen.blit(txt, (WIDTH//2 - txt.get_width()//2, 100))
-    
-    btn_login = pygame.Rect(WIDTH//2 - 120, 250, 240, 50)
-    pygame.draw.rect(screen, (0, 180, 100), btn_login, border_radius=10)
-    txt_btn = font_medium.render("ENTRAR / REGISTRO", True, (255, 255, 255))
-    screen.blit(txt_btn, (btn_login.centerx - txt_btn.get_width()//2, btn_login.centery - txt_btn.get_height()//2))
-    return btn_login
 
 def draw_ruleta():
     screen.fill((15, 15, 25))
-    
-    # 1. Header (Usuario y Monedas)
-    txt_user = font_medium.render(f"Piloto: {user_data['username']}", True, (255, 255, 255))
-    screen.blit(txt_user, (30, 20))
-    
-    screen.blit(img_coin, (30, 60))
+
+    # Header
+    screen.blit(img_coin, (20, 25))
     txt_coins = font_large.render(str(user_data["coins"]), True, (255, 215, 0))
-    screen.blit(txt_coins, (80, 62))
+    screen.blit(txt_coins, (65, 27))
 
-    # 2. slots (Contenedor de los 3 símbolos)
-    start_x = 100
+    txt_user = font_small.render(
+        f"Piloto: {user_data['username']}", True, (200, 200, 200)
+    )
+    screen.blit(txt_user, (20, 70))
+
+    # Botón TOP MUNDIAL
+    btn_top = pygame.Rect(WIDTH - 140, 25, 120, 40)
+    pygame.draw.rect(screen, (255, 215, 0), btn_top, border_radius=8)
+    txt_top_btn = font_small.render("🏆 TOP 10", True, (0, 0, 0))
+    screen.blit(
+        txt_top_btn,
+        (
+            btn_top.centerx - txt_top_btn.get_width() // 2,
+            btn_top.centery - txt_top_btn.get_height() // 2,
+        ),
+    )
+
+    # Botón DESPEGAR NAVE
+    btn_ship = pygame.Rect(20, 110, 410, 45)
+    pygame.draw.rect(screen, (220, 50, 50), btn_ship, border_radius=8)
+    txt_ship = font_medium.render("🚀 IR AL MINIJUEGO NAVE", True, (255, 255, 255))
+    screen.blit(
+        txt_ship,
+        (
+            btn_ship.centerx - txt_ship.get_width() // 2,
+            btn_ship.centery - txt_ship.get_height() // 2,
+        ),
+    )
+
+    # Tragamonedas (Slots Centrados)
+    slot_y = 220
+    gap = 15
+    slot_w = 110
+    start_x = (WIDTH - (3 * slot_w + 2 * gap)) // 2
+
     for i in range(3):
-        rect = pygame.Rect(start_x + i * 150, 200, 130, 160)
-        pygame.draw.rect(screen, (40, 40, 60), rect, border_radius=10)
-        pygame.draw.rect(screen, (255, 215, 0), rect, 3, border_radius=10)
-        
-        item = slot_reels[i] if not is_spinning else random.choice(SLOT_ITEMS)
-        screen.blit(item["img"], (rect.x + 5, rect.y + 5))
+        rect = pygame.Rect(start_x + i * (slot_w + gap), slot_y, slot_w, 140)
+        pygame.draw.rect(screen, (30, 30, 45), rect, border_radius=10)
+        pygame.draw.rect(screen, (255, 215, 0), rect, 2, border_radius=10)
 
-    # 3. Botones de Apuesta (x1, x3, x5)
+        item = slot_reels[i] if not is_spinning else random.choice(SLOT_ITEMS)
+        screen.blit(item["img"], (rect.x + (slot_w - 90) // 2, rect.y + 15))
+
+    # Multiplicadores
     btn_bets = []
+    bet_y = 400
     for idx, mult in enumerate([1, 3, 5]):
-        btn = pygame.Rect(100 + idx * 90, 400, 70, 40)
-        color = (0, 200, 255) if bet_multiplier == mult else (60, 60, 80)
+        btn = pygame.Rect(80 + idx * 110, bet_y, 80, 45)
+        color = (0, 200, 255) if bet_multiplier == mult else (50, 50, 70)
         pygame.draw.rect(screen, color, btn, border_radius=8)
         txt = font_medium.render(f"x{mult}", True, (255, 255, 255))
-        screen.blit(txt, (btn.centerx - txt.get_width()//2, btn.centery - txt.get_height()//2))
+        screen.blit(
+            txt,
+            (
+                btn.centerx - txt.get_width() // 2,
+                btn.centery - txt.get_height() // 2,
+            ),
+        )
         btn_bets.append((btn, mult))
 
-    # 4. Botón SPIN
-    btn_spin = pygame.Rect(100, 470, 250, 60)
-    can_spin = user_data["coins"] >= bet_multiplier and not is_spinning
-    color_spin = (0, 220, 100) if can_spin else (100, 100, 100)
-    pygame.draw.rect(screen, color_spin, btn_spin, border_radius=12)
-    txt_spin = font_large.render("GIRAR", True, (0, 0, 0) if can_spin else (200, 200, 200))
-    screen.blit(txt_spin, (btn_spin.centerx - txt_spin.get_width()//2, btn_spin.centery - txt_spin.get_height()//2))
+    # Botón GIRAR (PNG)
+    btn_spin = pygame.Rect(WIDTH // 2 - 90, 480, 180, 65)
+    screen.blit(img_button_spin, (btn_spin.x, btn_spin.y))
 
-    # 5. Botón Minijuego Nave (Arriba izquierda / Condicional)
-    btn_ship = pygame.Rect(30, 120, 200, 45)
-    pygame.draw.rect(screen, (220, 50, 50), btn_ship, border_radius=8)
-    txt_ship = font_small.render("DESPEGAR NAVE", True, (255, 255, 255))
-    screen.blit(txt_ship, (btn_ship.centerx - txt_ship.get_width()//2, btn_ship.centery - txt_ship.get_height()//2))
+    if user_data["coins"] < bet_multiplier:
+        overlay = pygame.Surface((180, 65), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        screen.blit(overlay, (btn_spin.x, btn_spin.y))
 
-    # 6. Lateral Derecho: Top Mundial
-    pygame.draw.rect(screen, (25, 25, 40), (580, 20, 290, 600), border_radius=12)
-    pygame.draw.rect(screen, (255, 215, 0), (580, 20, 290, 600), 2, border_radius=12)
-    
-    txt_top = font_medium.render("TOP 10 MUNDIAL", True, (255, 215, 0))
-    screen.blit(txt_top, (650, 40))
-    
-    for i, p in enumerate(top_world[:10]):
-        row_txt = font_small.render(f"#{i+1} {p['username'][:10]}: {p['coins']} 🪙", True, (220, 220, 220))
-        screen.blit(row_txt, (600, 90 + i * 45))
+    # Modal TOP MUNDIAL
+    if show_top_modal:
+        modal = pygame.Rect(30, 100, 390, 580)
+        pygame.draw.rect(screen, (20, 20, 35), modal, border_radius=15)
+        pygame.draw.rect(screen, (255, 215, 0), modal, 3, border_radius=15)
 
-    return btn_spin, btn_bets, btn_ship
+        txt_t = font_medium.render("RANKING MUNDIAL", True, (255, 215, 0))
+        screen.blit(txt_t, (modal.centerx - txt_t.get_width() // 2, 120))
+
+        for i, p in enumerate(top_world[:10]):
+            r_txt = font_small.render(
+                f"#{i+1} {p['username'][:12]}: {p['coins']} 🪙",
+                True,
+                (255, 255, 255),
+            )
+            screen.blit(r_txt, (60, 170 + i * 40))
+
+        btn_close = pygame.Rect(modal.centerx - 50, 620, 100, 40)
+        pygame.draw.rect(screen, (220, 50, 50), btn_close, border_radius=8)
+        txt_c = font_small.render("CERRAR", True, (255, 255, 255))
+        screen.blit(
+            txt_c,
+            (
+                btn_close.centerx - txt_c.get_width() // 2,
+                btn_close.centery - txt_c.get_height() // 2,
+            ),
+        )
+
+    return btn_spin, btn_bets, btn_ship, btn_top
+
 
 # --- Bucle Principal ---
 running = True
 while running:
-    clock.tick(FPS)
-    
+    time_delta = clock.tick(FPS) / 1000.0
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-            
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            mx, my = pygame.mouse.get_pos()
-            
-            if game_state == "LOGIN":
-                btn_login = draw_login()
-                if btn_login.collidepoint(mx, my):
-                    # Demo Login - En prod usarás un formulario de texto
-                    success, msg = database.iniciar_sesion("test@astro.com", "123456")
-                    if not success:
-                        database.registrar_usuario("test@astro.com", "123456", "AstroPlayer")
-                        database.iniciar_sesion("test@astro.com", "123456")
-                    sync_user()
-                    game_state = "RULETA"
 
-            elif game_state == "RULETA":
-                btn_spin, btn_bets, btn_ship = draw_ruleta()
-                
-                # Botón Spin
-                if btn_spin.collidepoint(mx, my) and not is_spinning:
-                    spin_slots()
-                
-                # Multiplicadores
-                for btn, mult in btn_bets:
-                    if btn.collidepoint(mx, my):
-                        bet_multiplier = mult
-                
-                # Ir a Nave
-                if btn_ship.collidepoint(mx, my):
-                    # Iniciar Minijuego
-                    game_state = "NAVE"
-                    ship_coins_collected = 0
-                    ship_start_time = pygame.time.get_ticks()
-                    falling_asteroids.clear()
-                    falling_coins_game.clear()
+        if game_state == "AUTH":
+            manager.process_events(event)
 
-    # --- Actualizar Animación Spin ---
+            if event.type == pygame_gui.UI_BUTTON_START_PRESS:
+                if event.ui_element == auth_widgets["toggle"]:
+                    auth_mode = "REGISTER" if auth_mode == "LOGIN" else "LOGIN"
+                    auth_widgets = build_auth_gui()
+
+                elif event.ui_element == auth_widgets["submit"]:
+                    email = auth_widgets["email"].get_text().strip()
+                    pas = auth_widgets["pass"].get_text().strip()
+
+                    if auth_mode == "LOGIN":
+                        ok, msg = database.iniciar_sesion(email, pas)
+                    else:
+                        usr = auth_widgets["user"].get_text().strip() if auth_widgets["user"] else ""
+                        ok, msg = database.registrar_usuario(email, pas, usr)
+
+                    if ok:
+                        sync_user()
+                        manager.clear_and_reset()
+                        game_state = "RULETA"
+                    else:
+                        auth_widgets["status"].set_text(msg)
+
+                elif event.ui_element == auth_widgets["google"]:
+                    ok, msg = database.iniciar_sesion_google()
+                    auth_widgets["status"].set_text(msg)
+
+        elif game_state == "RULETA":
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = pygame.mouse.get_pos()
+
+                if show_top_modal:
+                    show_top_modal = False
+                else:
+                    btn_spin, btn_bets, btn_ship, btn_top = draw_ruleta()
+
+                    if btn_top.collidepoint(mx, my):
+                        top_world = database.obtener_top_mundial()
+                        show_top_modal = True
+                    elif btn_spin.collidepoint(mx, my) and not is_spinning:
+                        spin_slots()
+                    elif btn_ship.collidepoint(mx, my):
+                        game_state = "NAVE"
+                        ship_coins_collected = 0
+                        ship_start_time = pygame.time.get_ticks()
+                        falling_asteroids.clear()
+                        falling_coins_game.clear()
+                    else:
+                        for btn, mult in btn_bets:
+                            if btn.collidepoint(mx, my):
+                                bet_multiplier = mult
+
+    # Animación Spin
     if is_spinning:
-        if pygame.time.get_ticks() - spin_timer > 1200: # 1.2 segundos girando
+        if pygame.time.get_ticks() - spin_timer > 1000:
             check_spin_result()
 
-    # --- Renderizado según Estado ---
-    if game_state == "LOGIN":
-        draw_login()
+    # --- Renders ---
+    if game_state == "AUTH":
+        screen.fill((15, 15, 25))
+        manager.update(time_delta)
+        manager.draw_ui(screen)
+
     elif game_state == "RULETA":
         draw_ruleta()
+
     elif game_state == "NAVE":
-        # Lógica Nave con aceleración de asteroides
         screen.fill((5, 5, 15))
         elapsed_sec = (pygame.time.get_ticks() - ship_start_time) // 1000
-        
-        # Mover nave con teclado
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_LEFT] and ship_x > 0: ship_x -= ship_speed
-        if keys[pygame.K_RIGHT] and ship_x < WIDTH - 60: ship_x += ship_speed
-        
-        # Spawner progresivo de Asteroides
-        spawn_rate = max(0.02, 0.02 + (elapsed_sec * 0.005)) # Aumenta la densidad
-        if random.random() < spawn_rate:
-            falling_asteroids.append(pygame.Rect(random.randint(0, WIDTH-50), -50, 50, 50))
-            
-        if random.random() < 0.03:
-            falling_coins_game.append(pygame.Rect(random.randint(0, WIDTH-30), -30, 30, 30))
 
-        # Dibujar Nave
+        # Arrastre para mover nave
+        if pygame.mouse.get_pressed()[0]:
+            mx, _ = pygame.mouse.get_pos()
+            ship_x = max(0, min(WIDTH - 50, mx - 25))
+
+        spawn_rate = max(0.02, 0.02 + (elapsed_sec * 0.006))
+        if random.random() < spawn_rate:
+            falling_asteroids.append(
+                pygame.Rect(random.randint(0, WIDTH - 45), -45, 45, 45)
+            )
+        if random.random() < 0.03:
+            falling_coins_game.append(
+                pygame.Rect(random.randint(0, WIDTH - 35), -35, 35, 35)
+            )
+
         screen.blit(img_nave_game, (ship_x, ship_y))
         ship_rect = pygame.Rect(ship_x, ship_y, 50, 50)
 
-        # Mover y dibujar Asteroides
         for ast in falling_asteroids[:]:
-            ast.y += 4 + (elapsed_sec // 10) # Caen más rápido
+            ast.y += 4 + (elapsed_sec // 8)
             screen.blit(img_asteroide_game, (ast.x, ast.y))
-            if ast.colliderect(ship_rect): # Chocar = Fin de la partida
+            if ast.colliderect(ship_rect):
                 database.guardar_monedas_nave(ship_coins_collected)
                 sync_user()
                 game_state = "RULETA"
-            if ast.y > HEIGHT: falling_asteroids.remove(ast)
+            if ast.y > HEIGHT:
+                falling_asteroids.remove(ast)
 
-        # Mover y dibujar Monedas
         for c in falling_coins_game[:]:
             c.y += 3
             screen.blit(img_coin, (c.x, c.y))
             if c.colliderect(ship_rect):
                 ship_coins_collected += 1
                 falling_coins_game.remove(c)
-            elif c.y > HEIGHT: falling_coins_game.remove(c)
+            elif c.y > HEIGHT:
+                falling_coins_game.remove(c)
 
-        # HUD Nave
-        txt_hud = font_medium.render(f"Tiempo: {elapsed_sec}s  |  Monedas: {ship_coins_collected}", True, (255, 255, 255))
+        txt_hud = font_medium.render(
+            f"Tiempo: {elapsed_sec}s | Monedas: {ship_coins_collected}",
+            True,
+            (255, 255, 255),
+        )
         screen.blit(txt_hud, (20, 20))
 
     pygame.display.flip()
